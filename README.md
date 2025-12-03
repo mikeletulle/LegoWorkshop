@@ -85,6 +85,7 @@ Your build should match the photos above for proper accuracy and alignment.
 The Color Sensor `.color()` readings are unreliable for this board, so `.reflection()` is used.
 
 Use **color_calibrater.py** to measure reflection values on each zone.
+pybricksdev run ble color_calibrater.py and notice RED values on each color and replace in contamination_sorter.py as shown here:
 
 ### Example classifier
 
@@ -221,12 +222,14 @@ Then trigger a command using Salesforce Debug Anonymous.
 ---
 
 ## Troubleshooting
-
+- Most issues are with color detection.
+Use **color_calibrater.py** to measure reflection values on each zone (manually move robot around).
+pybricksdev run ble color_calibrater.py and notice RED values on each color and replace in contamination_sorter.py as shown here:
 - If robot doesn’t move:
   ```bash
   pybricksdev run ble contamination_sorter.py
   ```
 - If STATUS lines don’t appear:  
   Ensure your Pybricks script prints `STATUS:...`
-- If BLE errors occur: reboot hub & ensure Chrome flags enabled
+
 
