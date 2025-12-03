@@ -20,41 +20,6 @@ The downward-facing Color Sensor is positioned like this:
 
 ---
 
-## Build the LEGO Robot
-
-We use LEGO’s official drive bases for reliable motor and sensor placement.
-
-### 1. Start with **Driving Base 1**  
-https://spike.legoeducation.com/prime/models/bltc58e302d70cf6530
-
-Provides:
-- Dual-motor drive  
-- Stable chassis  
-- Correct motor spacing & alignment  
-
----
-
-### 2. Add Distance Sensor system from **Driving Base 2 – Tools & Accessories**  
-https://spike.legoeducation.com/prime/models/blte7efff9c7c96c9cb
-
-Adds:
-- Front-mounted sensor brackets  
-- Extension arm  
-- Better rigidity for front sensors  
-
----
-
-### 3. Add Color & Ultrasonic Sensors
-
-| **Sensor Type**       | **Port** | **Notes** |
-|-----------------------|----------|-----------|
-| **Color Sensor**      | Port **B** | Mounted downward on the black grabber arm to detect colored zones (see photo). |
-| **Ultrasonic Sensor** | Port **F** | Detects obstacles and allows stopping ~2 inches before the box. |
-
-Your build should match the photos above for proper accuracy and alignment.
-
----
-
 ## How It Works – Architecture Overview
 
 1. **Salesforce**
@@ -66,17 +31,17 @@ Your build should match the photos above for proper accuracy and alignment.
      - `Message__c` (e.g., “Target Zone Reached”)
 
 2. **Python Bridge (`bridge_pybricks.py`)**
-   - Subscribes to Salesforce Pub/Sub  
+   - Subscribes to Salesforce Pub/Sub
    - When a command arrives:
      - Runs `pybricksdev run ble contamination_sorter.py`
-     - Parses `STATUS:` output lines  
+     - Parses `STATUS:` output
      - Publishes a Robot Status PE back to Salesforce
 
 3. **Pybricks Program (`contamination_sorter.py`)**
-   - Uses **reflection values**, not color names  
-   - Detects RED / BLUE / GREEN zones  
-   - Drives to the appropriate zone  
-   - Prints `STATUS:` lines that the bridge forwards to Salesforce  
+   - Uses **reflection values**, not color names
+   - Detects RED / BLUE / GREEN zones
+   - Drives to appropriate location
+   - Sends status lines back to the Python bridge
 
 ---
 
@@ -163,15 +128,15 @@ System.debug('SR: ' + sr);
 
 Steps:
 
-- Go to https://code.pybricks.com  
-- Click the **Bluetooth icon**, select your hub, and install  
+- Go to https://code.pybricks.com
+- Click the **Bluetooth icon**, select your hub, and install
 - If Bluetooth scanning doesn’t work:
   - Go to `chrome://flags`
   - Enable **Experimental Web Platform Features**
 - If Bluetooth still fails:
-  - Hold the hub's Bluetooth button  
-  - Plug USB cable into laptop (flashing **pink → green → blue**)  
-- On Windows 11, you may need the **WinUSB** driver from Pybricks troubleshooting wizard  
+  - Hold hub Bluetooth button
+  - Plug USB cable into laptop (flashing **pink → green → blue**)
+- On Windows 11, you might need the **WinUSB** driver via Pybricks troubleshooting wizard
 
 ---
 
@@ -197,13 +162,13 @@ pip install -r requirements.txt
 
 ## Running the System
 
-Start the bridge:
+Start bridge:
 
 ```bash
 python bridge_pybricks.py
 ```
 
-Then trigger a command using Salesforce Debug Anonymous.
+Send command via Salesforce Debug Anonymous (Apex).
 
 ---
 
@@ -222,11 +187,8 @@ Then trigger a command using Salesforce Debug Anonymous.
 
 ## Troubleshooting
 
-- If robot doesn’t move:
-  ```bash
-  pybricksdev run ble contamination_sorter.py
-  ```
-- If STATUS lines don’t appear:  
-  Ensure your Pybricks script prints `STATUS:...`
-- If BLE errors occur: reboot hub & ensure Chrome flags enabled
+- If robot doesn’t move: test with  
+  `pybricksdev run ble contamination_sorter.py`
+- If STATUS lines don’t appear: ensure contamination_sorter.py prints `STATUS:...`
+- BLE errors: reboot hub & re-enable Chrome flags
 
