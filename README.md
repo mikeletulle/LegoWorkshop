@@ -3,7 +3,7 @@
 This project connects a LEGO SPIKE Prime robot running Pybricks to Salesforce using the Pub/Sub API.  
 It listens for **LEGO_Command__e** platform events and drives the robot to the correct zone (Recycling OK, Contaminated, Inspection).
 It expects barriers at each end of board and turns around before hitting them.
-It also knows color placement order on the board (Green->Blue->Red) and has logic to turn around if going the wrong way.
+It also knows color placement order on the board (Green->Yellow->Red) and has logic to turn around if going the wrong way.
 After reaching the zone, it publishes back a **LEGO_Robot_Status__e** event.
 
 ---
@@ -76,7 +76,7 @@ Your build should match the photos above for proper accuracy and alignment.
 
 3. **Pybricks Program (`contamination_sorter.py`)**
    - Uses **reflection values**, not color names  
-   - Detects RED / BLUE / GREEN zones  
+   - Detects RED / YELLOW / GREEN zones  
    - Drives to the appropriate zone  
    - Prints `STATUS:` lines that the bridge forwards to Salesforce  
 
@@ -92,18 +92,14 @@ pybricksdev run ble color_calibrater.py and notice REF values on each color and 
 ### Example classifier
 
 ```python
-def classify_zone_from_reflection(ref_val):
-    if ref_val is None:
-        return None
+# ==========================================
+# --- COLOR CALIBRATION VALUES (EDIT HERE) ---
+# ==========================================
+CAL_RED    = 5
+CAL_GREEN  = 11
+CAL_YELLOW = 13.5  # Range 13-15
 
-    if ref_val == 1:
-        return "RED"
-    if ref_val == 2:
-        return "BLUE"
-    if ref_val >= 3:
-        return "GREEN"
-
-    return None
+# Filter out readings that are way off
 ```
 
 ---

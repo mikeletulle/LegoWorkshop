@@ -1,6 +1,6 @@
 from pybricks.hubs import PrimeHub
 from pybricks.pupdevices import Motor, UltrasonicSensor, ColorSensor
-from pybricks.parameters import Port, Direction, Stop, Color
+from pybricks.parameters import Port, Direction, Stop
 from pybricks.tools import wait
 
 hub = PrimeHub()
@@ -17,20 +17,34 @@ distance_sensor = UltrasonicSensor(Port.F)  # Forward at box
 scenario = "CONTAMINATED"
 print("STATUS:START scenario=" + scenario)
 
-# --- Tunable parameters ---
+# ==========================================
+# --- COLOR CALIBRATION VALUES (EDIT HERE) ---
+# ==========================================
+CAL_RED    = 5
+CAL_GREEN  = 11
+CAL_YELLOW = 13.5  # Range 13-15
 
+# Filter out readings that are way off
+VALID_RANGE_MIN = 0
+VALID_RANGE_MAX = 25 
+
+# ==========================================
+# --- TUNABLE PARAMETERS ---
+# ==========================================
 DRIVE_SPEED = 200               # forward speed (deg/s)
 SAMPLE_MS = 30                  # sensor sampling period (ms)
 CONSECUTIVE_TARGET_HITS = 5     # Matches needed to confirm zone
-STOP_DISTANCE_MM = 100          # distance to stop before box
-FINAL_DRIVE_ANGLE = 360         # Degrees to drive AFTER finding line
 
-# NEW: Ignore sensor for this many samples at start (approx 1.2 seconds)
-# This prevents it from seeing the line it started on and stopping instantly.
-WARMUP_SAMPLES = 40             
+# UPDATED: Increased to 150mm (~6 inches) to give more room to brake
+STOP_DISTANCE_MM = 150          
 
-# Physical order on board: GREEN -> BLUE -> RED
-LINE_COLORS = ("GREEN", "BLUE", "RED")
+# UPDATED: Increased to 500 degrees to drive deeper into the zone
+FINAL_DRIVE_ANGLE = 500         
+
+WARMUP_SAMPLES = 40             # Ignore sensor for first ~1.2s while driving
+
+# Physical order on board: GREEN -> YELLOW -> RED
+LINE_COLORS = ("GREEN", "YELLOW", "RED")
 
 # Circular buffer for smoothing reflection
 reflection_history = [0, 0, 0, 0, 0]
@@ -56,44 +70,41 @@ def spin_180():
 
 def get_smoothed_reflection():
     """
-    Reads the current reflection, adds it to a history list,
-    and returns the average.
-    Returns tuple: (raw_value, smoothed_average)
+    Reads current reflection, updates history, returns (raw, avg).
     """
     raw = color_sensor.reflection()
     if raw is None: raw = 0
     
-    # Pop oldest, add newest
     reflection_history.pop(0)
     reflection_history.append(raw)
     
-    # Calculate average
     avg = sum(reflection_history) / len(reflection_history)
     return raw, avg
 
 
 def classify_zone_from_smoothed_ref(avg_ref):
     """
-    Classify based on the AVERAGE reflection value (float).
-    
-    Calibration Data: Red=1, Blue=2, Green=3
-    Thresholds:
-      RED   < 1.5
-      BLUE  1.5 to 2.5
-      GREEN >= 2.5
+    Automatically finds the closest color based on CAL_ variables.
     """
     if avg_ref is None:
         return None
+        
+    if avg_ref < VALID_RANGE_MIN or avg_ref > VALID_RANGE_MAX:
+        return None
 
-    if avg_ref < 1.5:
+    dist_red    = abs(avg_ref - CAL_RED)
+    dist_green  = abs(avg_ref - CAL_GREEN)
+    dist_yellow = abs(avg_ref - CAL_YELLOW)
+
+    min_dist = min(dist_red, dist_green, dist_yellow)
+
+    if min_dist == dist_red:
         return "RED"
-
-    if 1.5 <= avg_ref < 2.5:
-        return "BLUE"
-
-    if avg_ref >= 2.5:
+    elif min_dist == dist_green:
         return "GREEN"
-
+    elif min_dist == dist_yellow:
+        return "YELLOW"
+    
     return None
 
 
@@ -104,30 +115,55 @@ def choose_target_color_for_scenario(s: str):
     if s == "CONTAMINATED":
         return "RED"
     if s in ("INSPECTION", "URGENT_INSPECTION", "URGENT_FIELD_INSPECTION"):
-        return "BLUE"
+        return "YELLOW"
     return "GREEN"
 
 
 def main():
     global scenario
 
-    print("Starting contamination sorter logic (Smoothed + Warmup)...")
+    print("Starting contamination sorter logic (Pre-Check + Safe Stop)...")
+    print(f"DEBUG Config: RED={CAL_RED}, GREEN={CAL_GREEN}, YELLOW={CAL_YELLOW}")
 
     target_color = choose_target_color_for_scenario(scenario)
     print("STATUS:TARGET_COLOR=" + target_color)
 
-    # 1. Wait a moment for sensor to stabilize
+    # 1. Initialize History Buffer
     wait(500)
-    
-    # 2. Pre-fill history buffer so averages aren't skewed at start
     initial_val = color_sensor.reflection()
     if initial_val is None: initial_val = 0
     for i in range(5):
         reflection_history[i] = initial_val
-        
-    print(f"DEBUG: Initial Sensor Read = {initial_val}")
 
-    seen_blue = False
+    # ---------------------------------------------------------
+    # NEW: PRE-CHECK (Are we already there?)
+    # ---------------------------------------------------------
+    # Check what zone we are sitting on RIGHT NOW.
+    _, initial_avg = get_smoothed_reflection()
+    start_zone = classify_zone_from_smoothed_ref(initial_avg)
+    
+    print(f"DEBUG: Start Read={initial_val}, Start Zone={start_zone}")
+
+    if start_zone == target_color:
+        print(f"DEBUG: Already on target {target_color}! Skipping drive.")
+        print(f"{target_color} line reached (target {target_color})")
+        print(f"STATUS:{target_color}_REACHED")
+        
+        # Determine status string
+        if scenario.upper() == "RECYCLING_OK":
+            print("STATUS:ZONE=RECYCLING_OK")
+        elif scenario.upper() == "CONTAMINATED":
+            print("STATUS:ZONE=CONTAMINATED")
+        else:
+            print("STATUS:ZONE=INSPECTION")
+            
+        hub.display.text("OK")
+        print("STATUS:DONE")
+        hub.speaker.beep(1500, 400)
+        return  # EXIT PROGRAM HERE
+    # ---------------------------------------------------------
+
+    seen_yellow = False
     seen_green = False
     seen_red = False
 
@@ -140,16 +176,12 @@ def main():
     while True:
         sample_counter += 1
 
-        # 1. Get RAW and SMOOTHED reflection
+        # 1. Get Sensor Data
         raw_refl, avg_refl = get_smoothed_reflection()
-        
-        # 2. Map smoothed reflection to zone
         current_zone = classify_zone_from_smoothed_ref(avg_refl)
-        
         dist = distance_sensor.distance()
 
-        # --- DEBUG PRINT ---
-        # Look closely at "Raw" vs "Avg". If Blue is missed, what is Raw showing?
+        # Debug print
         print(
             f"DEBUG Raw:{raw_refl} Avg:{avg_refl:.1f}",
             f"Zone:{current_zone}",
@@ -157,48 +189,54 @@ def main():
             f"Hits:{consecutive_target_hits}"
         )
 
-        # --- Safety: obstacle/box at either end ---
+        # --- Safety: Obstacle Check (Increased Distance) ---
         if dist is not None and dist <= STOP_DISTANCE_MM:
             stop_motors()
             print(f"STATUS:ABORT_OBSTACLE distance_mm={dist}")
             hub.speaker.beep(400, 250)
+            
+            # Spin and Reset
             spin_180()
-            seen_blue = seen_green = seen_red = False
+            seen_yellow = seen_green = seen_red = False
             consecutive_target_hits = 0
+            
+            # Reset warmup counter so we don't stop instantly after turning
+            sample_counter = 0 
+            
             drive_forward(DRIVE_SPEED)
             continue
 
-        # --- WARMUP PHASE ---
-        # Ignore hits for the first ~1.2 seconds so we don't stop on the start line
+        # --- Warmup (Skip detection while moving off start line) ---
         if sample_counter < WARMUP_SAMPLES:
             consecutive_target_hits = 0
             wait(SAMPLE_MS)
             continue
 
-        # If detected zone is not one of our line colors, reset hit counter
+        # If detected zone is unknown, reset hits
         if current_zone not in LINE_COLORS:
             consecutive_target_hits = 0
             wait(SAMPLE_MS)
             continue
 
-        # Mark line colors we've actually crossed
-        if current_zone == "BLUE":
-            seen_blue = True
+        # Mark crossed lines
+        if current_zone == "YELLOW":
+            seen_yellow = True
         elif current_zone == "GREEN":
             seen_green = True
         elif current_zone == "RED":
             seen_red = True
 
-        # Target hit logic
+        # Check Target Matches
         if current_zone == target_color:
             consecutive_target_hits += 1
         else:
             consecutive_target_hits = 0
 
-        # Stop if target reached
+        # Success Logic
         if consecutive_target_hits >= CONSECUTIVE_TARGET_HITS:
             print("DEBUG: Sensor reached zone, moving rest of robot in")
 
+            # Final push into the zone (Increased Angle)
             left_motor.run_angle(DRIVE_SPEED, FINAL_DRIVE_ANGLE, wait=False)
             right_motor.run_angle(DRIVE_SPEED, FINAL_DRIVE_ANGLE, wait=True)
 
@@ -215,42 +253,45 @@ def main():
                 print("STATUS:ZONE=INSPECTION")
             break
 
-        # --- "Wrong way" logic (GREEN -> BLUE -> RED) ---
+        # --- Wrong Way Logic (GREEN -> YELLOW -> RED) ---
         
         # Searching GREEN (Edge)
         if target_color == "GREEN":
-            if current_zone == "BLUE":
+            if current_zone == "YELLOW":
                 pass
-            elif current_zone == "RED" and seen_blue and not seen_green:
+            elif current_zone == "RED" and seen_yellow and not seen_green:
                 stop_motors()
                 print("STATUS:WRONG_WAY_FOR_GREEN")
                 spin_180()
-                seen_blue = seen_green = seen_red = False
+                seen_yellow = seen_green = seen_red = False
                 consecutive_target_hits = 0
+                sample_counter = 0 # Reset warmup on turn
                 drive_forward(DRIVE_SPEED)
                 continue
 
         # Searching RED (Edge)
         if target_color == "RED":
-            if current_zone == "BLUE":
+            if current_zone == "YELLOW":
                 pass
-            elif current_zone == "GREEN" and seen_blue and not seen_red:
+            elif current_zone == "GREEN" and seen_yellow and not seen_red:
                 stop_motors()
                 print("STATUS:WRONG_WAY_FOR_RED")
                 spin_180()
-                seen_blue = seen_green = seen_red = False
+                seen_yellow = seen_green = seen_red = False
                 consecutive_target_hits = 0
+                sample_counter = 0
                 drive_forward(DRIVE_SPEED)
                 continue
 
-        # Searching BLUE (Middle)
-        if target_color == "BLUE":
+        # Searching YELLOW (Middle)
+        if target_color == "YELLOW":
             if seen_green and seen_red and consecutive_target_hits == 0:
                 stop_motors()
-                print("STATUS:WRONG_WAY_FOR_BLUE")
+                print("STATUS:WRONG_WAY_FOR_YELLOW")
                 spin_180()
-                seen_blue = seen_green = seen_red = False
+                seen_yellow = seen_green = seen_red = False
                 consecutive_target_hits = 0
+                sample_counter = 0
                 drive_forward(DRIVE_SPEED)
                 continue
 
