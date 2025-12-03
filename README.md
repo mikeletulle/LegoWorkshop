@@ -2,7 +2,7 @@
 
 This project connects a LEGO SPIKE Prime robot running Pybricks to Salesforce using the Pub/Sub API.  
 It listens for **LEGO_Command__e** platform events and drives the robot to the correct zone (Recycling OK, Contaminated, Inspection).
-It expects barriers at each end of zone and turns around before hitting them.
+It expects barriers at each end of board and turns around before hitting them.
 It also knows color placement order on the board (Green->Blue->Red) and has logic to turn around if going the wrong way.
 After reaching the zone, it publishes back a **LEGO_Robot_Status__e** event.
 
