@@ -1,0 +1,8 @@
+sf_token_info.json
+__pycache__/
+*.pyc
+venv/
+.venv/
+.DS_Store
+sf_config.json
+sf_config.json
