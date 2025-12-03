@@ -21,12 +21,19 @@ print("STATUS:START scenario=" + scenario)
 
 DRIVE_SPEED = 200               # forward speed (deg/s)
 SAMPLE_MS = 30                  # sensor sampling period (ms)
-CONSECUTIVE_TARGET_HITS = 5     # how many consecutive "target color" samples to stop
+CONSECUTIVE_TARGET_HITS = 5     # Matches needed to confirm zone
 STOP_DISTANCE_MM = 100          # distance to stop before box
-FINAL_DRIVE_ANGLE = 360         # Degrees to drive AFTER finding line (360 ~= 1 wheel rotation ~= 7 inches)
+FINAL_DRIVE_ANGLE = 360         # Degrees to drive AFTER finding line
+
+# NEW: Ignore sensor for this many samples at start (approx 1.2 seconds)
+# This prevents it from seeing the line it started on and stopping instantly.
+WARMUP_SAMPLES = 40             
 
 # Physical order on board: GREEN -> BLUE -> RED
 LINE_COLORS = ("GREEN", "BLUE", "RED")
+
+# Circular buffer for smoothing reflection
+reflection_history = [0, 0, 0, 0, 0]
 
 
 def stop_motors():
@@ -47,27 +54,46 @@ def spin_180():
     wait(200)
 
 
-def classify_zone_from_reflection(ref_val):
+def get_smoothed_reflection():
     """
-    Classify board zone purely from reflection.
-    Returns "GREEN", "BLUE", "RED", or None.
+    Reads the current reflection, adds it to a history list,
+    and returns the average.
+    Returns tuple: (raw_value, smoothed_average)
     """
-    if ref_val is None:
+    raw = color_sensor.reflection()
+    if raw is None: raw = 0
+    
+    # Pop oldest, add newest
+    reflection_history.pop(0)
+    reflection_history.append(raw)
+    
+    # Calculate average
+    avg = sum(reflection_history) / len(reflection_history)
+    return raw, avg
+
+
+def classify_zone_from_smoothed_ref(avg_ref):
+    """
+    Classify based on the AVERAGE reflection value (float).
+    
+    Calibration Data: Red=1, Blue=2, Green=3
+    Thresholds:
+      RED   < 1.5
+      BLUE  1.5 to 2.5
+      GREEN >= 2.5
+    """
+    if avg_ref is None:
         return None
 
-    # RED: darkest
-    if ref_val == 1:
+    if avg_ref < 1.5:
         return "RED"
 
-    # BLUE: medium
-    if ref_val == 2:
+    if 1.5 <= avg_ref < 2.5:
         return "BLUE"
 
-    # GREEN: brighter
-    if ref_val >= 3:
+    if avg_ref >= 2.5:
         return "GREEN"
 
-    # Fallback
     return None
 
 
@@ -85,12 +111,22 @@ def choose_target_color_for_scenario(s: str):
 def main():
     global scenario
 
-    print("Starting contamination sorter logic (Reflection Only)...")
+    print("Starting contamination sorter logic (Smoothed + Warmup)...")
 
     target_color = choose_target_color_for_scenario(scenario)
     print("STATUS:TARGET_COLOR=" + target_color)
 
-    # Track which lines we've actually crossed
+    # 1. Wait a moment for sensor to stabilize
+    wait(500)
+    
+    # 2. Pre-fill history buffer so averages aren't skewed at start
+    initial_val = color_sensor.reflection()
+    if initial_val is None: initial_val = 0
+    for i in range(5):
+        reflection_history[i] = initial_val
+        
+    print(f"DEBUG: Initial Sensor Read = {initial_val}")
+
     seen_blue = False
     seen_green = False
     seen_red = False
@@ -104,18 +140,21 @@ def main():
     while True:
         sample_counter += 1
 
-        # 1. Get raw reflection ONLY
-        refl = color_sensor.reflection()
+        # 1. Get RAW and SMOOTHED reflection
+        raw_refl, avg_refl = get_smoothed_reflection()
+        
+        # 2. Map smoothed reflection to zone
+        current_zone = classify_zone_from_smoothed_ref(avg_refl)
+        
         dist = distance_sensor.distance()
 
-        # 2. Map reflection to a zone string
-        current_zone = classify_zone_from_reflection(refl)
-
-        # --- DEBUG PRINT EVERY TIME ---
+        # --- DEBUG PRINT ---
+        # Look closely at "Raw" vs "Avg". If Blue is missed, what is Raw showing?
         print(
-            "DEBUG Refl:", refl,
-            "Zone:", current_zone,
-            "Target:", target_color
+            f"DEBUG Raw:{raw_refl} Avg:{avg_refl:.1f}",
+            f"Zone:{current_zone}",
+            f"Target:{target_color}",
+            f"Hits:{consecutive_target_hits}"
         )
 
         # --- Safety: obstacle/box at either end ---
@@ -129,7 +168,14 @@ def main():
             drive_forward(DRIVE_SPEED)
             continue
 
-        # If detected zone is not one of our line colors (None), reset hit counter
+        # --- WARMUP PHASE ---
+        # Ignore hits for the first ~1.2 seconds so we don't stop on the start line
+        if sample_counter < WARMUP_SAMPLES:
+            consecutive_target_hits = 0
+            wait(SAMPLE_MS)
+            continue
+
+        # If detected zone is not one of our line colors, reset hit counter
         if current_zone not in LINE_COLORS:
             consecutive_target_hits = 0
             wait(SAMPLE_MS)
@@ -151,15 +197,11 @@ def main():
 
         # Stop if target reached
         if consecutive_target_hits >= CONSECUTIVE_TARGET_HITS:
-            # 1. Announce we found it
             print("DEBUG: Sensor reached zone, moving rest of robot in")
 
-            # 2. Drive the extra distance (blocking until done)
-            # We run one motor with wait=False and the other wait=True to run them together
             left_motor.run_angle(DRIVE_SPEED, FINAL_DRIVE_ANGLE, wait=False)
             right_motor.run_angle(DRIVE_SPEED, FINAL_DRIVE_ANGLE, wait=True)
 
-            # 3. NOW we stop
             stop_motors()
             
             print(f"{current_zone} line reached (target {target_color})")

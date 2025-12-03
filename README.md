@@ -200,9 +200,10 @@ pip install -r requirements.txt
 
 ## Running the System
 
-Start the bridge:
+Get oAuth credentials by logging in and Start the bridge:
 
 ```bash
+python sf_login.py
 python bridge_pybricks.py
 ```
 
@@ -226,7 +227,8 @@ Then trigger a command using Salesforce Debug Anonymous.
 ## Troubleshooting
 - Most issues are with color detection.
 Use **color_calibrater.py** to measure reflection values on each zone (manually move robot around).
-pybricksdev run ble color_calibrater.py and notice REF values on each color and replace in contamination_sorter.py as shown here:
+pybricksdev run ble color_calibrater.py 
+and notice REF values on each color and replace in contamination_sorter.py as shown here:
 - If robot doesn’t move:
   ```bash
   pybricksdev run ble contamination_sorter.py
