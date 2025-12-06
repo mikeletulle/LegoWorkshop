@@ -1,6 +1,24 @@
+#--- HYBRID DETECTION LOGIC EXPLANATION ---
+# This script uses a two-stage approach to identify the colored zones on the board:
+#
+# 1. PRIMARY: Color Sensor Value (High Confidence)
+#    We first check color_sensor.color(). If the internal firmware strongly identifies
+#    one of our target colors (Red, Green, Yellow), we use that result for this sample.
+#    (Note: We still require CONSECUTIVE_TARGET_HITS of these samples to stop the robot).
+#
+# 2. FALLBACK: Reflection Intensity (Low/Variable Light)
+#    If the Color Sensor returns 'None' or an ambiguous value, we fall back to
+#    measuring light reflection intensity.
+#    - We smooth the values over time (Moving Average) to filter out noise.
+#    - We compare the average against calibrated constants (CAL_RED, etc.).
+#    - We only accept the match if it falls within a tight tolerance window (+/- 1.0).
+#
+# This hybrid approach ensures the robot works reliably even if specific lighting conditions
+# cause one method to fail.
+
 from pybricks.hubs import PrimeHub
 from pybricks.pupdevices import Motor, UltrasonicSensor, ColorSensor
-from pybricks.parameters import Port, Direction, Stop
+from pybricks.parameters import Port, Direction, Stop, Color
 from pybricks.tools import wait
 
 hub = PrimeHub()
@@ -20,9 +38,12 @@ print("STATUS:START scenario=" + scenario)
 # ==========================================
 # --- COLOR CALIBRATION VALUES (EDIT HERE) ---
 # ==========================================
-CAL_RED    = 5
-CAL_GREEN  = 11
-CAL_YELLOW = 13.5  # Range 13-15
+CAL_RED    = 6
+CAL_GREEN  = 13
+CAL_YELLOW = 16  
+
+# NEW: How close the reading must be to count (e.g., +/- 1.0)
+ZONE_TOLERANCE = 2.0
 
 # Filter out readings that are way off
 VALID_RANGE_MIN = 0
@@ -39,12 +60,12 @@ CONSECUTIVE_TARGET_HITS = 5     # Matches needed to confirm zone
 STOP_DISTANCE_MM = 150          
 
 # UPDATED: Increased to 500 degrees to drive deeper into the zone
-FINAL_DRIVE_ANGLE = 450         
+FINAL_DRIVE_ANGLE = 250         
 
 WARMUP_SAMPLES = 40             # Ignore sensor for first ~1.2s while driving
 
 # Physical order on board: GREEN -> YELLOW -> RED
-LINE_COLORS = ("GREEN", "YELLOW", "RED")
+ZONE_COLORS = ("GREEN", "YELLOW", "RED")
 
 # Circular buffer for smoothing reflection
 reflection_history = [0, 0, 0, 0, 0]
@@ -82,9 +103,25 @@ def get_smoothed_reflection():
     return raw, avg
 
 
+def get_zone_from_color(col):
+    """
+    Maps high-confidence color sensor readings to our zone strings.
+    This acts as the PRIMARY detection method.
+    """
+    if col == Color.RED:
+        return "RED"
+    if col == Color.GREEN:
+        return "GREEN"
+    if col == Color.YELLOW:
+        return "YELLOW"
+    return None
+
+
 def classify_zone_from_smoothed_ref(avg_ref):
     """
-    Automatically finds the closest color based on CAL_ variables.
+    Classifies the zone ONLY if the reading is within ZONE_TOLERANCE (+/- 1.0)
+    of a calibrated value. Otherwise returns None.
+    This acts as the FALLBACK detection method.
     """
     if avg_ref is None:
         return None
@@ -92,19 +129,19 @@ def classify_zone_from_smoothed_ref(avg_ref):
     if avg_ref < VALID_RANGE_MIN or avg_ref > VALID_RANGE_MAX:
         return None
 
-    dist_red    = abs(avg_ref - CAL_RED)
-    dist_green  = abs(avg_ref - CAL_GREEN)
-    dist_yellow = abs(avg_ref - CAL_YELLOW)
-
-    min_dist = min(dist_red, dist_green, dist_yellow)
-
-    if min_dist == dist_red:
+    # Check RED (Window: 4.0 to 6.0)
+    if abs(avg_ref - CAL_RED) <= ZONE_TOLERANCE:
         return "RED"
-    elif min_dist == dist_green:
+        
+    # Check GREEN (Window: 10.0 to 12.0)
+    if abs(avg_ref - CAL_GREEN) <= ZONE_TOLERANCE:
         return "GREEN"
-    elif min_dist == dist_yellow:
+        
+    # Check YELLOW (Window: 12.5 to 14.5)
+    if abs(avg_ref - CAL_YELLOW) <= ZONE_TOLERANCE:
         return "YELLOW"
     
+    # If the value falls in the gaps (e.g. 8.0), it is not a zone.
     return None
 
 
@@ -122,8 +159,8 @@ def choose_target_color_for_scenario(s: str):
 def main():
     global scenario
 
-    print("Starting contamination sorter logic (Pre-Check + Safe Stop)...")
-    print(f"DEBUG Config: RED={CAL_RED}, GREEN={CAL_GREEN}, YELLOW={CAL_YELLOW}")
+    print("Starting contamination sorter logic (Hybrid Color + Ref Window)...")
+    print(f"DEBUG Config: RED={CAL_RED}, GREEN={CAL_GREEN}, YELLOW={CAL_YELLOW}, TOLERANCE={ZONE_TOLERANCE}")
 
     target_color = choose_target_color_for_scenario(scenario)
     print("STATUS:TARGET_COLOR=" + target_color)
@@ -138,15 +175,21 @@ def main():
     # ---------------------------------------------------------
     # NEW: PRE-CHECK (Are we already there?)
     # ---------------------------------------------------------
-    # Check what zone we are sitting on RIGHT NOW.
+    # Check what zone we are sitting on RIGHT NOW (Using Hybrid Logic)
     _, initial_avg = get_smoothed_reflection()
-    start_zone = classify_zone_from_smoothed_ref(initial_avg)
+    initial_col = color_sensor.color()
     
-    print(f"DEBUG: Start Read={initial_val}, Start Zone={start_zone}")
+    # Priority 1: Color
+    start_zone = get_zone_from_color(initial_col)
+    # Priority 2: Reflection
+    if start_zone is None:
+        start_zone = classify_zone_from_smoothed_ref(initial_avg)
+    
+    print(f"DEBUG: Start Read={initial_val}, Start Col={initial_col}, Start Zone={start_zone}")
 
     if start_zone == target_color:
         print(f"DEBUG: Already on target {target_color}! Skipping drive.")
-        print(f"{target_color} line reached (target {target_color})")
+        print(f"{target_color} ZONE reached (target {target_color})")
         print(f"STATUS:{target_color}_REACHED")
         
         # Determine status string
@@ -177,13 +220,24 @@ def main():
         sample_counter += 1
 
         # 1. Get Sensor Data
+        # Read Color (High Priority)
+        col_reading = color_sensor.color()
+        # Read Reflection (Low Priority / Fallback) - Always read to keep history buffer alive
         raw_refl, avg_refl = get_smoothed_reflection()
-        current_zone = classify_zone_from_smoothed_ref(avg_refl)
+        
+        # 2. Determine Zone based on Hybrid Logic
+        # Priority 1: Color Sensor Value
+        current_zone = get_zone_from_color(col_reading)
+        
+        # Priority 2: Reflection Fallback
+        if current_zone is None:
+            current_zone = classify_zone_from_smoothed_ref(avg_refl)
+            
         dist = distance_sensor.distance()
 
         # Debug print
         print(
-            f"DEBUG Raw:{raw_refl} Avg:{avg_refl:.1f}",
+            f"DEBUG Col:{col_reading} AvgRef:{avg_refl:.1f}",
             f"Zone:{current_zone}",
             f"Target:{target_color}",
             f"Hits:{consecutive_target_hits}"
@@ -206,19 +260,19 @@ def main():
             drive_forward(DRIVE_SPEED)
             continue
 
-        # --- Warmup (Skip detection while moving off start line) ---
+        # --- Warmup (Skip detection while moving off start ZONE) ---
         if sample_counter < WARMUP_SAMPLES:
             consecutive_target_hits = 0
             wait(SAMPLE_MS)
             continue
 
         # If detected zone is unknown, reset hits
-        if current_zone not in LINE_COLORS:
+        if current_zone not in ZONE_COLORS:
             consecutive_target_hits = 0
             wait(SAMPLE_MS)
             continue
 
-        # Mark crossed lines
+        # Mark crossed ZONEs
         if current_zone == "YELLOW":
             seen_yellow = True
         elif current_zone == "GREEN":
@@ -242,7 +296,7 @@ def main():
 
             stop_motors()
             
-            print(f"{current_zone} line reached (target {target_color})")
+            print(f"{current_zone} ZONE reached (target {target_color})")
             print(f"STATUS:{current_zone}_REACHED")
 
             if scenario.upper() == "RECYCLING_OK":
