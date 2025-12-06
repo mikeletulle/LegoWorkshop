@@ -18,8 +18,8 @@
 
 from pybricks.hubs import PrimeHub
 from pybricks.pupdevices import Motor, UltrasonicSensor, ColorSensor
-from pybricks.parameters import Port, Direction, Stop, Color
-from pybricks.tools import wait
+from pybricks.parameters import Port, Direction, Stop, Color, Icon
+from pybricks.tools import wait, StopWatch
 
 hub = PrimeHub()
 
@@ -31,7 +31,11 @@ right_motor = Motor(Port.D, positive_direction=Direction.CLOCKWISE)
 color_sensor = ColorSensor(Port.B)          # Down at board
 distance_sensor = UltrasonicSensor(Port.F)  # Forward at box
 
-# Scenario
+# ==========================================
+# --- SCENARIO CONFIGURATION ---
+# ==========================================
+# Options: "RECYCLING_OK", "CONTAMINATED", "INSPECTION"
+# Set to CONTAMINATED to test the new Siren/Turbo features
 scenario = "RECYCLING_OK"
 print("STATUS:START scenario=" + scenario)
 
@@ -52,9 +56,11 @@ VALID_RANGE_MAX = 25
 # ==========================================
 # --- TUNABLE PARAMETERS ---
 # ==========================================
-DRIVE_SPEED = 200               # forward speed (deg/s)
-SAMPLE_MS = 30                  # sensor sampling period (ms)
+DRIVE_SPEED = 200               # Normal forward speed (deg/s)
+TURBO_SPEED = 500               # NEW: Faster speed for Contaminated scenario
+SAMPLE_MS = 30                  # Sensor sampling period (ms)
 CONSECUTIVE_TARGET_HITS = 5     # Matches needed to confirm zone
+VOLUME_PERCENT = 30             # Speaker volume (0-100) - Increased to 30 ensure audibility
 
 # UPDATED: Increased to 150mm (~6 inches) to give more room to brake
 STOP_DISTANCE_MM = 150          
@@ -70,13 +76,17 @@ ZONE_COLORS = ("GREEN", "YELLOW", "RED")
 # Circular buffer for smoothing reflection
 reflection_history = [0, 0, 0, 0, 0]
 
+# NEW: Timer for siren effects
+effect_timer = StopWatch()
+siren_last_phase = None  # Global variable to track siren state
+
 
 def stop_motors():
     left_motor.stop()
     right_motor.stop()
 
 
-def drive_forward(speed=DRIVE_SPEED):
+def drive_forward(speed):
     left_motor.run(speed)
     right_motor.run(speed)
 
@@ -156,14 +166,53 @@ def choose_target_color_for_scenario(s: str):
     return "GREEN"
 
 
+def update_siren_effects():
+    """
+    Handles siren sounds and flashing matrix lights.
+    Alternates every 400ms.
+    
+    Uses standard beep() which is blocking but reliable.
+    We keep duration short (50ms) to minimize impact on driving smoothness.
+    """
+    global siren_last_phase # Access the global variable
+    
+    t = effect_timer.time()
+    
+    # Create a 800ms cycle (400ms ON, 400ms OFF)
+    phase = (t % 800) < 400
+    
+    if siren_last_phase != phase:
+        siren_last_phase = phase
+        if phase:
+            # Phase A: High Tone + Square Icon
+            hub.display.icon(Icon.SQUARE)
+            hub.speaker.beep(900, 50) # 900Hz, 50ms (Short blip)
+        else:
+            # Phase B: Low Tone + X Icon
+            hub.display.icon(Icon.FALSE) # X shape
+            hub.speaker.beep(600, 50) # 600Hz, 50ms
+
+
 def main():
     global scenario
+
+    # Set volume (30% is a good starting point for audible but not loud)
+    hub.speaker.volume(VOLUME_PERCENT)
 
     print("Starting contamination sorter logic (Hybrid Color + Ref Window)...")
     print(f"DEBUG Config: RED={CAL_RED}, GREEN={CAL_GREEN}, YELLOW={CAL_YELLOW}, TOLERANCE={ZONE_TOLERANCE}")
 
     target_color = choose_target_color_for_scenario(scenario)
     print("STATUS:TARGET_COLOR=" + target_color)
+
+    # --- NEW: DETERMINE SPEED AND MODE ---
+    if scenario == "CONTAMINATED":
+        target_speed = TURBO_SPEED
+        hazard_mode = True
+        print("ALERT: HAZARD MODE ACTIVE. TURBO SPEED ENGAGED.")
+    else:
+        target_speed = DRIVE_SPEED
+        hazard_mode = False
 
     # 1. Initialize History Buffer
     wait(500)
@@ -192,7 +241,6 @@ def main():
         print(f"{target_color} ZONE reached (target {target_color})")
         print(f"STATUS:{target_color}_REACHED")
         
-        # Determine status string
         if scenario.upper() == "RECYCLING_OK":
             print("STATUS:ZONE=RECYCLING_OK")
         elif scenario.upper() == "CONTAMINATED":
@@ -213,11 +261,19 @@ def main():
     consecutive_target_hits = 0
     sample_counter = 0
 
-    hub.display.text("GO")
-    drive_forward(DRIVE_SPEED)
+    if not hazard_mode:
+        hub.display.text("GO")
+    else:
+        effect_timer.reset() # Start siren timer
+
+    drive_forward(target_speed)
 
     while True:
         sample_counter += 1
+
+        # --- NEW: Handle Siren Effects ---
+        if hazard_mode:
+            update_siren_effects()
 
         # 1. Get Sensor Data
         # Read Color (High Priority)
@@ -235,13 +291,13 @@ def main():
             
         dist = distance_sensor.distance()
 
-        # Debug print
-        print(
-            f"DEBUG Col:{col_reading} AvgRef:{avg_refl:.1f}",
-            f"Zone:{current_zone}",
-            f"Target:{target_color}",
-            f"Hits:{consecutive_target_hits}"
-        )
+        # Debug print (Throttle this if it slows down the loop too much)
+        # print(
+        #     f"DEBUG Col:{col_reading} AvgRef:{avg_refl:.1f}",
+        #     f"Zone:{current_zone}",
+        #     f"Target:{target_color}",
+        #     f"Hits:{consecutive_target_hits}"
+        # )
 
         # --- Safety: Obstacle Check (Increased Distance) ---
         if dist is not None and dist <= STOP_DISTANCE_MM:
@@ -257,7 +313,8 @@ def main():
             # Reset warmup counter so we don't stop instantly after turning
             sample_counter = 0 
             
-            drive_forward(DRIVE_SPEED)
+            # RESUME DRIVING (With correct speed!)
+            drive_forward(target_speed)
             continue
 
         # --- Warmup (Skip detection while moving off start ZONE) ---
@@ -291,8 +348,9 @@ def main():
             print("DEBUG: Sensor reached zone, moving rest of robot in")
 
             # Final push into the zone (Increased Angle)
-            left_motor.run_angle(DRIVE_SPEED, FINAL_DRIVE_ANGLE, wait=False)
-            right_motor.run_angle(DRIVE_SPEED, FINAL_DRIVE_ANGLE, wait=True)
+            # Use same speed for consistency
+            left_motor.run_angle(target_speed, FINAL_DRIVE_ANGLE, wait=False)
+            right_motor.run_angle(target_speed, FINAL_DRIVE_ANGLE, wait=True)
 
             stop_motors()
             
@@ -308,6 +366,7 @@ def main():
             break
 
         # --- Wrong Way Logic (GREEN -> YELLOW -> RED) ---
+        # Note: We keep drive_forward(target_speed) in the resets to maintain turbo if needed
         
         # Searching GREEN (Edge)
         if target_color == "GREEN":
@@ -319,8 +378,8 @@ def main():
                 spin_180()
                 seen_yellow = seen_green = seen_red = False
                 consecutive_target_hits = 0
-                sample_counter = 0 # Reset warmup on turn
-                drive_forward(DRIVE_SPEED)
+                sample_counter = 0 
+                drive_forward(target_speed)
                 continue
 
         # Searching RED (Edge)
@@ -334,7 +393,7 @@ def main():
                 seen_yellow = seen_green = seen_red = False
                 consecutive_target_hits = 0
                 sample_counter = 0
-                drive_forward(DRIVE_SPEED)
+                drive_forward(target_speed)
                 continue
 
         # Searching YELLOW (Middle)
@@ -346,7 +405,7 @@ def main():
                 seen_yellow = seen_green = seen_red = False
                 consecutive_target_hits = 0
                 sample_counter = 0
-                drive_forward(DRIVE_SPEED)
+                drive_forward(target_speed)
                 continue
 
         wait(SAMPLE_MS)
