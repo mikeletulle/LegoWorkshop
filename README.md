@@ -162,13 +162,14 @@ These steps assume a **clean laptop** with no preinstalled Python tools. They wo
 ### 5.1 Install Python
 
 1. Go to:  
-   🔗 https://www.python.org/downloads/
+   🔗 https://www.python.org/downloads/release/python-3120/
 
-2. Download **Python 3.12+** for your OS. (*64-bit version)
+2. Download **Python 3.12** for your OS. (*64-bit version)
 
 3. **Windows:**  
-   - Run the installer.
-   - Make sure you check **“Add Python to PATH”** on the first screen.
+   - Scroll down to button that says ‘Download Python Install Manager’ and then on next page the button that says Download Installer (MSIX)
+   - Run the installer
+   - Make sure you say yes to **“Add Python to PATH”** when prompted.
    - Complete installation.
 
 4. **macOS:**  
@@ -192,7 +193,7 @@ These steps assume a **clean laptop** with no preinstalled Python tools. They wo
 # Pick any folder you like
 cd ~
 
-# Clone the project (or download it and unzip)
+# Clone the project (or download it and unzip, copy all root extracted files to a folder called 'LegoWorkshop')
 git clone https://github.com/mikeletulle/LegoWorkshop.git
 
 cd LegoWorkshop
@@ -217,6 +218,7 @@ sf_login.py
 ```
 
 ### 5.3 Create and Activate a Virtual Environment
+from the folder LegoWorkshop files start a new terminal
 
 **macOS / Linux:**
 
@@ -239,10 +241,14 @@ cd LegoWorkshop
 python -m venv venv
 
 # Activate
-venv\Scriptsctivate
+venv\Scripts\activate
 ```
 
 You should see `(venv)` at the beginning of your shell prompt.
+If you get an error about running scripts being disabled run:
+```bash
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
 
 ### 5.4 Install Python Dependencies
 
