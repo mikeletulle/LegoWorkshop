@@ -42,7 +42,7 @@ print("STATUS:START scenario=" + scenario)
 # ==========================================
 # --- COLOR CALIBRATION VALUES (EDIT HERE) ---
 # ==========================================
-CAL_RED    = 6
+CAL_RED    = 7
 CAL_GREEN  = 13
 CAL_YELLOW = 16  
 
