@@ -244,8 +244,6 @@ cd LegoWorkshop
 # Create venv
 python -m venv venv
 
-# Activate on Mac/Linux
-source venv/bin/activate
 # Activate on Windows PowerShell
 .\venv\Scripts\Activate.ps1
 # Activate on DOS
