@@ -7,12 +7,16 @@
 #
 # into sf_token_info.json in the current folder.
 #
-# expects file in same directory called sf_config.json that contains:
-#{
-#  "CLIENT_ID" : "xxxxx",
-#  "CLIENT_SECRET" : "xxxxx"
-#}
-# All other code (salesforce_pubsub.py, bridge_main.py) will just read that file.
+# Expects a local secret file called 'mysf_config.json' (which is git-ignored)
+# containing your Connected App credentials:
+# {
+#   "consumer_key": "YOUR_CONNECTED_APP_KEY",
+#   "consumer_secret": "YOUR_CONNECTED_APP_SECRET",
+#   "instance_url": "https://YOUR_DOMAIN.my.salesforce.com"  <-- Optional, but recommended
+# }
+#
+# Note: This script uses the OAuth 2.0 Web Server Flow (Browser-based).
+# You do NOT need to put your username or password in the config file.
 
 import http.server
 import socketserver
@@ -26,31 +30,46 @@ from pathlib import Path
 
 # ---------- CONFIGURATION ----------
 
-# Use https://test.salesforce.com for sandboxes
-LOGIN_BASE_URL = "https://login.salesforce.com"
+# Default fallback if instance_url is not in config
+DEFAULT_LOGIN_URL = "https://login.salesforce.com"
 
 # Must match exactly what you put in the Connected App
 REDIRECT_URI = "http://localhost:8080/callback"
 
 # File paths
 TOKEN_FILE = Path("sf_token_info.json")
-CONFIG_FILE = Path("sf_config.json")
+CONFIG_FILE = Path("mysf_config.json")
+TEMPLATE_FILE = Path("sf_config.json")
 
-# Load CLIENT_ID and CLIENT_SECRET from sf_config.json
+# Globals for config
+CLIENT_ID = None
+CLIENT_SECRET = None
+LOGIN_BASE_URL = DEFAULT_LOGIN_URL
+
+# Load configuration
 try:
     if not CONFIG_FILE.exists():
         print(f"ERROR: {CONFIG_FILE} not found.")
-        print("Please create it with the following format:")
-        print('{\n  "CLIENT_ID": "...",\n  "CLIENT_SECRET": "..."\n}')
+        if TEMPLATE_FILE.exists():
+            print(f"1. Copy '{TEMPLATE_FILE}' to '{CONFIG_FILE}'")
+            print(f"2. Add your Consumer Key/Secret to '{CONFIG_FILE}'")
+        else:
+            print(f"Please create '{CONFIG_FILE}' with your consumer_key and consumer_secret.")
         sys.exit(1)
 
     with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
-        CLIENT_ID = config.get("CLIENT_ID")
-        CLIENT_SECRET = config.get("CLIENT_SECRET")
-
+        
+        # Support both naming conventions (Template uses consumer_*, legacy uses CLIENT_*)
+        CLIENT_ID = config.get("consumer_key") or config.get("CLIENT_ID")
+        CLIENT_SECRET = config.get("consumer_secret") or config.get("CLIENT_SECRET")
+        
+        # If user defined a specific instance (MyDomain), use that for login
+        if config.get("instance_url"):
+            LOGIN_BASE_URL = config["instance_url"].rstrip("/")
+        
     if not CLIENT_ID or not CLIENT_SECRET:
-        print(f"ERROR: CLIENT_ID or CLIENT_SECRET missing in {CONFIG_FILE}")
+        print(f"ERROR: consumer_key (or CLIENT_ID) or consumer_secret missing in {CONFIG_FILE}")
         sys.exit(1)
 
 except Exception as e:
@@ -125,6 +144,9 @@ def run_local_server_and_get_code(timeout=180) -> str:
     OAuthHandler.auth_code = None
     OAuthHandler.error = None
 
+    # Allow address reuse prevents "Address already in use" errors on quick restarts
+    socketserver.TCPServer.allow_reuse_address = True
+    
     with socketserver.TCPServer(("localhost", 8080), OAuthHandler) as httpd:
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
@@ -166,7 +188,7 @@ def main():
     # 1) Open browser to Salesforce login
     state = "lego_agent_bridge"
     auth_url = build_auth_url(state)
-    print("Opening Salesforce login page in your browser...")
+    print(f"Opening Salesforce login page ({LOGIN_BASE_URL}) in your browser...")
     print(auth_url)
     webbrowser.open(auth_url)
 
@@ -184,6 +206,9 @@ def main():
         token_response = exchange_code_for_token(code)
     except Exception as e:
         print(f"Error exchanging code for token: {e}")
+        # Print detailed error if available
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Details: {e.response.text}")
         sys.exit(1)
 
     access_token = token_response.get("access_token")

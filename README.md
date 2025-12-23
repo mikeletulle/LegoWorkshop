@@ -2,7 +2,11 @@
 
 Repo: https://github.com/mikeletulle/LegoWorkshop
 
-This project connects Salesforce Agentforce (or Flows/other automation) to a LEGO SPIKE Prime robot running Pybricks. The robot acts as a **“Contamination Sorter”** that drives to different zones on a board based on a Salesforce decision, and then reports its status back to Salesforce.
+This project connects Salesforce Agentforce (or Flows/other automation) to a LEGO SPIKE Prime robot running Pybricks. In this example the robot acts as a **“Contamination Sorter”** that drives to different colored zones on a board based on a Agentforce decision (how it classifies a case based on it's description), and then reports its status back to Salesforce. It uses the Salesforce Pub/Sub API to listen for the platform events as well as publish them back. This was first used for a hands on workshop in which the participants created a prompt template and flow that let agentforce update a classification field on a case which in turn creates a platform event ( 'LEGO_Command__e'  with a 'Command__c' ) field listened for by this python bridge code. After getting this example use case working the participants were encouraged to come up with new ideas and new commands and use Agentforce Vibes to tweak the Pybricks code to make the robot have different behaviors. 
+
+**"Developer Notes:"** Because the color sensor doesn't always work well in low light situations it contains somewhat complex logic that let's it use averages of samples of the reflection values of the sensor as a fallback to the actual color values it detects (or doesn't detect). There is a script one can use to calibrate the sensor to your environment's specific lighting conditions as described below. 
+
+Because one cannot pass arguments to the pybricks scripts running on the hub, the main script (bridge_pybricks.py) detects which scenario is needed by the robot and creates a runtime script for each of the three scenarios and loads the appropriate one onto the hub as needed. 
 
 ---
 
@@ -28,7 +32,7 @@ This project connects Salesforce Agentforce (or Flows/other automation) to a LEG
 
 - **“Recycling OK”** → Drives in a calm, normal speed to the **Recycling OK** zone.
 - **“Contaminated”** → Drives fast with “hazard mode” siren to the **Contaminated / Landfill** zone.
-- **“Urgent Field Inspection”** → Drives to the **Urgent Inspection** zone with distinctive behavior.
+- **“Field Inspection”** → Drives to the **Inspection** zone.
 
 When the robot reaches the target zone, it publishes a **`LEGO_Robot_Status__e`** event back into Salesforce so the Agent / Flow can log “Target Zone Reached” on the Case.
 
@@ -147,7 +151,7 @@ Note this has already been done for hubs at workshop
      - Follow the Pybricks wizard to install firmware.
 
 5. **Windows note (USB driver):**  
-   On Windows 11, you may need to let the Pybricks troubleshooting wizard install a **WinUSB** driver for the hub before firmware installation works reliably.
+   On Windows 11, you may need to follow the Pybricks troubleshooting wizard to install a **WinUSB** driver for the hub before firmware installation works reliably.
 
 6. Once installed, you should be able to connect from the Pybricks web IDE and run simple test programs.
 
@@ -240,7 +244,11 @@ cd LegoWorkshop
 # Create venv
 python -m venv venv
 
-# Activate
+# Activate on Mac/Linux
+source venv/bin/activate
+# Activate on Windows PowerShell
+.\venv\Scripts\Activate.ps1
+# Activate on DOS
 venv\Scripts\activate
 ```
 
@@ -321,7 +329,7 @@ The bridge code calls `publish_robot_status(...)` in `salesforce_pubsub.py` to c
 
 ## 7. Local Salesforce OAuth Setup
 
-In the **LegoWorkshop** folder, create a file called `sf_config.json`:
+In the **LegoWorkshop** folder, copy the file called `sf_config.json` to `mysf_config.json` and repace the 'XXXXXXXX's to your secrets:
 
 ```json
 {
@@ -334,7 +342,7 @@ Make sure this file is **in the same folder** as `sf_login.py`.
 
 ### 7.1 Run sf_login.py
 
-With your virtual environment active in `LegoWorkshop`:
+With your virtual environment active in `LegoWorkshop` (as shown above):
 
 ```bash
 python sf_login.py
